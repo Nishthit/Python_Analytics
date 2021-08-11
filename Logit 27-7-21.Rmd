@@ -1,0 +1,151 @@
+---
+title: "Update on Logit UCLA Admit Data R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+Date 25-7-21
+
+Update ROC
+
+```{r get data and examine it}
+ucla<- read.csv("https://stats.idre.ucla.edu/stat/data/binary.csv",header = TRUE)
+head (ucla)
+summary(ucla)
+sapply(ucla,mean)
+xtabs(~admit + rank, data = ucla)
+dplyr::tibble(ucla)
+```
+
+
+
+```{r Logit Model}
+LM<-glm(admit~gre+gpa + factor(rank),data=ucla, family="binomial")
+
+summary(LM)                       #logit regression coef refers to change in log odds [log(p)/(1-p)] with unit increase of variable
+# car::vif(LM)
+# caret::varImp(LM)
+coef(LM)
+# round(exp(coef(LM)),1)
+```
+Model: Y*=log(p/(1-p))=-3.99+.0023gre + .804gpa -.675rank2
+p/(1-p)= exp(-3.99+.0023gre + .804gpa -.675rank2)
+Interpret: 1 point increase in gpa raises log odds by .804 units, odds ratio--p/(1-p)--by 2.2
+Null deviance: 499.98  on 399  degrees of freedom
+Residual deviance: 458.52  on 394  degrees of freedom
+AIC: 470.52
+
+```{r validate model}
+library(ResourceSelection)
+hoslem.test(ucla$admit,fitted(LM))
+
+```
+Fitted model is no different from actual 
+(Note that Hosmer Lemeshow test becomes unreliable for very large samples.)
+
+```{r crosscheck predicted probability}
+# Model: Y*=log(p/(1-p))=-3.99+.0023gre + .804gpa -.675rank2
+df<-data.frame(gre=580,gpa=3.395,rank=2) # IVs in this trial df are medians taken from summary below chunk 1 
+L = -3.989979 + .002264*580 + .804038*3.395 -.675443 # compute L with the equation of the logit model above
+
+# p/(1-p) = exp(L) => (1-p)/p = 1/exp(L) => # 1/p = 1+1/exp(L)
+p<-1/(1+1/exp (L)) #compute p from the log odds of the equation
+p
+
+# We can estimate the above probability p with the predict function as follows
+predict(LM, df, type="response") #LM is the preceding logit model we estimated
+# Change IV values in the above df to crosscheck
+
+
+L<- -3.989979 + .002264*800 + .804038*4 +0 #L is log odds
+p<-1/(1+1/exp (L)) #compute p from the log odds of the equation
+p
+
+predict(LM,data.frame(gre=800,gpa=4,rank=1), type="response")
+```
+Note that the computed probability p above matches the p predicted with the predict function
+
+
+```{r predict outcomes for various IV levels}
+
+x1<-data.frame(gre=720,gpa=3.8,rank=1)
+predict(LM,newdata=x1,type="response")
+
+x2<-data.frame(gre=c(720,220,800),gpa=4,rank=1)
+predict(LM,newdata=x2,type="response")
+
+x2<-data.frame(gre=220,gpa=c(2.0, 2.26,3.26),rank=4)
+predict(LM,newdata=x2,type="response")
+
+
+X<- data.frame(rank=c(1, 2, 3, 4), gre=mean(ucla$gre),gpa=mean(ucla$gpa))
+result<-predict(LM, newdata=X, type="response")
+round(result,digits=2)
+```
+
+```{r add model prediction to ucla dataframe}
+ucla1<-ucla
+ucla1$prob<-fitted(LM)
+dplyr::tibble(ucla1)
+ucla1$p_admit<-ifelse(ucla1$prob>.5,1,0)
+dplyr::tibble(ucla1)
+```
+
+
+
+
+```{r misclassification matrix}
+m_matrix<-xtabs(~p_admit+admit,ucla1)
+m_matrix
+pmatrix<-round(prop.table(m_matrix)*100,digits=1) # in percentages
+pmatrix
+```
+
+
+
+```{r validate model/LM}
+
+Accuracy<-pmatrix[1,1]+pmatrix[2,2]   # Overall accuracy of the model--unreliable for unbalanced data
+Accuracy
+
+precision<-pmatrix[2,2]/(pmatrix[2,2]+pmatrix[2,1]) # Precision = TP / (TP + FP) (aka specificity)
+precision     #1-precision is known as False Positive Rate or fpr
+
+sensitivity<-pmatrix[2,2]/(pmatrix[2,2]+pmatrix[1,2]) # sensitivity = TP / (TP + FN) (FN is positive)
+sensitivity # aka recall or True Positive Rate or tpr, the chance that an actual positive will test positive
+
+F1<-2/(1/precision+1/sensitivity)
+F1
+
+```
+Precision/specificity = TP / (TP + FP) (What prop of positive predictions are correct?)
+Recall/sensitivity    = TP / (TP + FN) (What prop of true positives are detected?)
+Tradeoff between precision and recall, we cannot maximize both.
+F1 Score = harmonic mean of precision P and recall R = 2PR / (P + R), We cannot maximize both precision and recall because there is a trade-off between them.
+
+Next, we study ROC--another metric for evaluating classifiers like logit. ROC summarizes the predictive power for all possible values of p > 0.5. area under curve (AUC), referred to as index of accuracy(A) or concordance index, is a perfect performance metric for ROC curve. Higher the area under curve, better the prediction power of the model. Below is a sample ROC curve. The ROC of a perfect predictive model has TP equals 1 and FP equals 0. This curve will touch the top left corner of the graph.
+
+```{r ROC}
+pr_admission <- prediction(ucla1$prob, ucla1$admit)
+prf_admission <- performance(pr_admission, measure = "tpr", x.measure = "fpr")
+plot(prf_admission, colorize = TRUE, lwd=3)
+abline(a=0,b=1)
+```
+```{r AUC Area Under the ROC Curve}
+library(cvAUC) # Alternative
+auc <- AUC(ucla1$prob, ucla1$admit) # area under the curve
+auc
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
